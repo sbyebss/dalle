@@ -31,18 +31,23 @@ parser = argparse.ArgumentParser()
 group = parser.add_mutually_exclusive_group(required=False)
 
 group.add_argument('--vae_path', type=str,
+                   default=None,
                    help='path to your trained discrete VAE')
 
 group.add_argument('--dalle_path', type=str,
+                   default='/home/jfan97/dpmodel/dalle/16L_64HD_8H_512I_128T_cc12m_cc3m_3E.pth',
                    help='path to your partially trained DALL-E')
 
-parser.add_argument('--vqgan_model_path', type=str, default=None,
+parser.add_argument('--vqgan_model_path', type=str,
+                    default="/home/jfan97/dpmodel/dalle/vqgan_imagenet_f16_1024.ckpt",
                     help='path to your trained VQGAN weights. This should be a .ckpt file. (only valid when taming option is enabled)')
 
-parser.add_argument('--vqgan_config_path', type=str, default=None,
+parser.add_argument('--vqgan_config_path', type=str,
+                    default="/home/jfan97/dpmodel/dalle/vqgan_imagenet_f16_1024_config.yml",
                     help='path to your trained VQGAN config. This should be a .yaml file. (only valid when taming option is enabled)')
 
-parser.add_argument('--image_text_folder', type=str, required=True,
+parser.add_argument('--image_text_folder', type=str,
+                    default='/home/jfan97/Study_hard/general_monge_map/playground/DALLE-datasets/data',
                     help='path to your folder of images and text for learning the DALL-E')
 
 parser.add_argument(
@@ -122,10 +127,10 @@ model_group = parser.add_argument_group('Model settings')
 model_group.add_argument('--dim', default=512,
                          type=int, help='Model dimension')
 
-model_group.add_argument('--text_seq_len', default=256,
+model_group.add_argument('--text_seq_len', default=128,
                          type=int, help='Text sequence length')
 
-model_group.add_argument('--depth', default=2, type=int, help='Model depth')
+model_group.add_argument('--depth', default=12, type=int, help='Model depth')
 
 model_group.add_argument('--heads', default=8, type=int,
                          help='Model number of heads')
