@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 
 from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
 from dalle_pytorch import distributed_utils
-from dalle_pytorch.loader import TextImageDataset
+from dalle_pytorch.loader import UnpairedTextImageDataset, TextDataset
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
 
 # libraries needed for webdataset support
@@ -111,6 +111,10 @@ train_group.add_argument('--keep_n_checkpoints', default=None, type=int,
 train_group.add_argument('--batch_size', default=4,
                          type=int, help='Batch size')
 
+
+train_group.add_argument('--text_batch_size', default=8,
+                         type=int, help='Batch size')
+
 train_group.add_argument('--ga_steps', default=1, type=int,
                          help='Number of steps to accumulate gradients across per each iteration. DeepSpeed only.')
 
@@ -193,6 +197,7 @@ RESUME = exists(DALLE_PATH)
 
 EPOCHS = args.epochs
 BATCH_SIZE = args.batch_size
+TEXT_BATCH_SIZE = args.text_batch_size
 
 LEARNING_RATE = args.learning_rate
 GRAD_CLIP_NORM = args.clip_grad_norm
@@ -408,8 +413,7 @@ if ENABLE_WEBDATASET:
         .batched(BATCH_SIZE, partial=False)
     )
 else:
-    # TODO this is dataset
-    ds = TextImageDataset(
+    ds = UnpairedTextImageDataset(
         args.image_text_folder,
         text_len=TEXT_SEQ_LEN,
         image_size=IMAGE_SIZE,
@@ -418,6 +422,12 @@ else:
         tokenizer=tokenizer,
         shuffle=is_shuffle,
     )
+    text_ds = TextDataset(
+        args.image_text_folder,
+        text_len=TEXT_SEQ_LEN,
+        truncate_captions=args.truncate_captions,
+        tokenizer=tokenizer,
+        shuffle=is_shuffle,)
 
 assert len(ds) > 0, 'dataset is empty'
 if distr_backend.is_root_worker():
@@ -445,7 +455,9 @@ else:
     # Regular DataLoader for image-text-folder datasets
     dl = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=is_shuffle,
                     drop_last=True, sampler=data_sampler)
-
+    text_dl = DataLoader(
+        text_ds, batch_size=TEXT_BATCH_SIZE, shuffle=is_shuffle, drop_last=True)
+    text_it = iter(text_dl)
 
 # initialize DALL-E
 
@@ -609,6 +621,13 @@ for epoch in range(resume_epoch, EPOCHS):
         if args.fp16:
             images = images.half()
         text, images = map(lambda t: t.cuda(), (text, images))
+
+        # load the affiliated texts to calculate Gromov Monge cost
+        try:
+            affi_text = next(text_it)
+        except StopIteration:
+            text_it = iter(text_dl)
+            affi_text = next(text_it)
 
         # TODO: main part
         loss = distr_dalle(text, images, return_loss=True)

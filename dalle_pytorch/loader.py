@@ -24,19 +24,8 @@ class TextImageDataset(Dataset):
         super().__init__()
         self.shuffle = shuffle
         path = Path(folder)
+        keys, text_files, image_files = self.prepare_common_keys(path)
 
-        text_files = [*path.glob('**/*.txt')]
-        image_files = [
-            *path.glob('**/*.png'), *path.glob('**/*.jpg'),
-            *path.glob('**/*.jpeg'), *path.glob('**/*.bmp')
-        ]
-
-        text_files = {text_file.stem: text_file for text_file in text_files}
-        image_files = {
-            image_file.stem: image_file for image_file in image_files}
-        keys = (image_files.keys() & text_files.keys())
-
-        self.keys = list(keys)
         self.text_files = {k: v for k, v in text_files.items() if k in keys}
         self.gen_image_dict(image_files, keys)
         self.text_len = text_len
@@ -51,6 +40,21 @@ class TextImageDataset(Dataset):
                                 ratio=(1., 1.)),
             T.ToTensor()
         ])
+
+    def prepare_common_keys(self, path):
+        text_files = [*path.glob('**/*.txt')]
+        image_files = [
+            *path.glob('**/*.png'), *path.glob('**/*.jpg'),
+            *path.glob('**/*.jpeg'), *path.glob('**/*.bmp')
+        ]
+
+        text_files = {text_file.stem: text_file for text_file in text_files}
+        image_files = {
+            image_file.stem: image_file for image_file in image_files}
+        keys = (image_files.keys() & text_files.keys())
+
+        self.keys = list(keys)
+        return keys, text_files, image_files
 
     def gen_image_dict(self, image_files, keys):
         self.image_files = {k: v for k, v in image_files.items() if k in keys}
@@ -109,3 +113,43 @@ class UnpairedTextImageDataset(TextImageDataset):
         shuffle(img_values)
         self.image_files = {k: v for k, v in zip(
             img_keys, img_values) if k in keys}
+
+
+class TextDataset(TextImageDataset):
+    def __init__(self,
+                 folder,
+                 text_len=128,
+                 truncate_captions=False,
+                 tokenizer=None,
+                 shuffle=False
+                 ):
+        self.shuffle = shuffle
+        path = Path(folder)
+
+        keys, text_files, _ = self.prepare_common_keys(path)
+        self.text_files = {k: v for k, v in text_files.items() if k in keys}
+        self.text_len = text_len
+        self.truncate_captions = truncate_captions
+        self.tokenizer = tokenizer
+
+    def __getitem__(self, ind):
+        key = self.keys[ind]
+        text_file = self.text_files[key]
+
+        descriptions = text_file.read_text().split('\n')
+        descriptions = list(filter(lambda t: len(t) > 0, descriptions))
+        try:
+            description = choice(descriptions)
+        except IndexError as zero_captions_in_file_ex:
+            print(f"An exception occurred trying to load file {text_file}.")
+            print(f"Skipping index {ind}")
+            return self.skip_sample(ind)
+
+        tokenized_text = self.tokenizer.tokenize(
+            description,
+            self.text_len,
+            truncate_text=self.truncate_captions
+        ).squeeze(0)
+
+        # Success
+        return tokenized_text
