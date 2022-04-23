@@ -1,5 +1,5 @@
 from pathlib import Path
-from random import randint, choice
+from random import randint, choice, shuffle
 
 import PIL
 
@@ -32,25 +32,28 @@ class TextImageDataset(Dataset):
         ]
 
         text_files = {text_file.stem: text_file for text_file in text_files}
-        image_files = {image_file.stem: image_file for image_file in image_files}
-
+        image_files = {
+            image_file.stem: image_file for image_file in image_files}
         keys = (image_files.keys() & text_files.keys())
 
         self.keys = list(keys)
         self.text_files = {k: v for k, v in text_files.items() if k in keys}
-        self.image_files = {k: v for k, v in image_files.items() if k in keys}
+        self.gen_image_dict(image_files, keys)
         self.text_len = text_len
         self.truncate_captions = truncate_captions
         self.resize_ratio = resize_ratio
         self.tokenizer = tokenizer
         self.image_transform = T.Compose([
             T.Lambda(lambda img: img.convert('RGB')
-            if img.mode != 'RGB' else img),
+                     if img.mode != 'RGB' else img),
             T.RandomResizedCrop(image_size,
                                 scale=(self.resize_ratio, 1.),
                                 ratio=(1., 1.)),
             T.ToTensor()
         ])
+
+    def gen_image_dict(self, image_files, keys):
+        self.image_files = {k: v for k, v in image_files.items() if k in keys}
 
     def __len__(self):
         return len(self.keys)
@@ -97,3 +100,12 @@ class TextImageDataset(Dataset):
 
         # Success
         return tokenized_text, image_tensor
+
+
+class UnpairedTextImageDataset(TextImageDataset):
+    def gen_image_dict(self, image_files, keys):
+        img_keys = list(image_files.keys())
+        img_values = list(image_files.values())
+        shuffle(img_values)
+        self.image_files = {k: v for k, v in zip(
+            img_keys, img_values) if k in keys}
