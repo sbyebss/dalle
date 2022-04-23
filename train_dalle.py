@@ -408,6 +408,7 @@ if ENABLE_WEBDATASET:
         .batched(BATCH_SIZE, partial=False)
     )
 else:
+    # TODO this is dataset
     ds = TextImageDataset(
         args.image_text_folder,
         text_len=TEXT_SEQ_LEN,
@@ -514,7 +515,7 @@ deepspeed_config = {
         "module_depth": -1,
         "top_modules": 1,
         "detailed": True,
-        "output_file": None  # TODO Can't get this to work.
+        "output_file": None  # (author's) fixme Can't get this to work.
     },
 }
 
@@ -609,6 +610,7 @@ for epoch in range(resume_epoch, EPOCHS):
             images = images.half()
         text, images = map(lambda t: t.cuda(), (text, images))
 
+        # TODO: main part
         loss = distr_dalle(text, images, return_loss=True)
 
         if using_deepspeed:
