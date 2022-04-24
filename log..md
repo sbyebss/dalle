@@ -34,3 +34,7 @@ My concern:
 - [ ] discriminator is too weak
 
 - [ ] augoregressiv model as generator is too slow
+
+### 4/24/2022
+
+I find I need to decrease it to O(n^2). Otherwise I'll give it up. And I cannot pushforward everything for additional text dataset in advance because T(x) for those texts are also in the training. So all the pushforward have to be done in the loss function.
