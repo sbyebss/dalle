@@ -4,6 +4,7 @@ import time
 from glob import glob
 import os
 import shutil
+from copy import deepcopy
 
 import torch
 import wandb  # Quit early if user doesn't have wandb installed.
@@ -12,7 +13,7 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 
-from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE
+from dalle_pytorch import OpenAIDiscreteVAE, VQGanVAE, DiscreteVAE, DALLE_unpaired, set_requires_grad
 from dalle_pytorch import distributed_utils
 from dalle_pytorch.loader import UnpairedTextImageDataset, TextDataset
 from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, ChineseTokenizer, YttmTokenizer
@@ -126,6 +127,12 @@ train_group.add_argument('--clip_grad_norm', default=0.5,
 
 train_group.add_argument('--lr_decay', dest='lr_decay', action='store_true')
 
+train_group.add_argument('--n_inner_iter', default=5,
+                         type=int, help='# updates for generator')
+
+train_group.add_argument('--n_outer_iter', default=1,
+                         type=int, help='# updates for discriminator')
+
 model_group = parser.add_argument_group('Model settings')
 
 model_group.add_argument('--dim', default=512,
@@ -168,6 +175,12 @@ def exists(val):
 
 def get_trainable_params(model):
     return [params for params in model.parameters() if params.requires_grad]
+
+
+def set_dalle_requires_grad(model, value):
+    for name, param in model.named_parameters():
+        if 'vae' not in name:
+            param.requires_grad = value
 
 
 def cp_path_to_dir(cp_path, tag):
@@ -280,6 +293,7 @@ if RESUME:
     dalle_params, vae_params, weights = loaded_obj['hparams'], loaded_obj['vae_params'], loaded_obj['weights']
     opt_gen_state = loaded_obj.get('opt_gen_state')
     scheduler_state = loaded_obj.get('scheduler_state')
+    dis_weights = loaded_obj.get('dis_weights')
 
     if vae_params is not None:
         vae = DiscreteVAE(**vae_params)
@@ -462,7 +476,7 @@ else:
 
 # initialize DALL-E
 
-dalle = DALLE(vae=vae, **dalle_params)
+dalle = DALLE_unpaired(vae=vae, **dalle_params)
 if not using_deepspeed:
     if args.fp16:
         dalle = dalle.half()
@@ -470,13 +484,18 @@ if not using_deepspeed:
 
 if RESUME and not using_deepspeed:
     dalle.load_state_dict(weights)
+    discriminator = deepcopy(dalle.vae.loss.discriminator)
+    if dis_weights is not None:
+        discriminator.load_state_dict(dis_weights)
 
 # optimizer
 # add additional discriminator optimizer
-
 opt_gen = Adam(get_trainable_params(dalle), lr=LEARNING_RATE)
+opt_dis = Adam(discriminator, lr=LEARNING_RATE)
 if RESUME and opt_gen_state:
     opt_gen.load_state_dict(opt_gen_state)
+    if opt_dis_state:
+        opt_dis.load_state_dict(opt_dis_state)  # TODO
 
 if LR_DECAY:
     scheduler = ReduceLROnPlateau(
@@ -631,32 +650,37 @@ for epoch in range(resume_epoch, EPOCHS):
             text_it = iter(text_dl)
             affi_text = next(text_it)
 
-        # TODO: main part
-        loss = distr_dalle(text, images, return_loss=True)
+        if i % (args.n_outer_iter + args.n_inner_iter) == 0:
+            iter_count = 0
 
-        if using_deepspeed:
-            distr_dalle.backward(loss)
-            distr_dalle.step()
-            # Gradients are automatically zeroed after the step
-        else:
+        if iter_count < args.n_inner_iter:
+            set_requires_grad(discriminator, False)
+            set_dalle_requires_grad(distr_dalle, True)
+            loss, log = distr_dalle.loss(text, images, optim_idx=0)
+            distr_opt.zero_grad()
             loss.backward()
             clip_grad_norm_(distr_dalle.parameters(), GRAD_CLIP_NORM)
             distr_opt.step()
-            distr_opt.zero_grad()
+        else:
+            set_requires_grad(discriminator, True)
+            set_dalle_requires_grad(distr_dalle, False)
+            loss, log = distr_dalle.loss(text, images, optim_idx=1)
+            opt_dis.zero_grad()
+            loss.backward()
+            opt_dis.step()
+
+        iter_count += 1
 
         # Collective loss, averaged
-        avg_loss = distr_backend.average_all(loss)
-
-        log = {}
-
+        # avg_loss = distr_backend.average_all(loss)
         if i % 10 == 0 and distr_backend.is_root_worker():
-            print(epoch, i, f'loss - {avg_loss.item()}')
+            # print(epoch, i, f'loss - {avg_loss.item()}')
 
             log = {
                 **log,
                 'epoch': epoch,
                 'iter': i,
-                'loss': avg_loss.item()
+                # 'loss': avg_loss.item()
             }
 
         if i % SAVE_EVERY_N_STEPS == 0:
@@ -674,9 +698,7 @@ for epoch in range(resume_epoch, EPOCHS):
                     image = dalle.generate_images(
                         text[:1], filter_thres=0.9)  # topk sampling at 0.9
 
-                log = {
-                    **log,
-                }
+                log = {**log, }
                 if not avoid_model_calls:
                     log['image'] = wandb.Image(image, caption=decoded_text)
 
@@ -693,7 +715,7 @@ for epoch in range(resume_epoch, EPOCHS):
             wandb.log(log)
 
     if LR_DECAY:
-        distr_scheduler.step(avg_loss)
+        distr_scheduler.step(loss)
 
     save_model(DALLE_OUTPUT_FILE_NAME, epoch=epoch)
 

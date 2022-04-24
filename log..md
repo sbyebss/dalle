@@ -18,6 +18,8 @@ Details:
 
 From taming code, I see that the input of encoder and discriminator are the same tensor. We don't need to implement forward for VQGAN because our fake image is not from VQGAN.
 
+I find we need to use resampling to generate fake images! totally different with cross-entropy training! They input both text and image into the transformer.
+
 - [ ] need to make sure the format of fake image is the same as real image
 
 Paper:
@@ -26,3 +28,9 @@ Paper:
 
 Before I change: their optimizer includes parameters of
 xxx_emb, transformer, to_logits. All of these should be distributed as generator parameters.
+
+My concern:
+
+- [ ] discriminator is too weak
+
+- [ ] augoregressiv model as generator is too slow
