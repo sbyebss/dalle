@@ -278,7 +278,7 @@ if RESUME:
     loaded_obj = torch.load(str(dalle_path), map_location='cpu')
 
     dalle_params, vae_params, weights = loaded_obj['hparams'], loaded_obj['vae_params'], loaded_obj['weights']
-    opt_state = loaded_obj.get('opt_state')
+    opt_gen_state = loaded_obj.get('opt_gen_state')
     scheduler_state = loaded_obj.get('scheduler_state')
 
     if vae_params is not None:
@@ -455,6 +455,7 @@ else:
     # Regular DataLoader for image-text-folder datasets
     dl = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=is_shuffle,
                     drop_last=True, sampler=data_sampler)
+    # Additional DataLoader for text-folder datasets, this is used to do Gromov
     text_dl = DataLoader(
         text_ds, batch_size=TEXT_BATCH_SIZE, shuffle=is_shuffle, drop_last=True)
     text_it = iter(text_dl)
@@ -471,14 +472,15 @@ if RESUME and not using_deepspeed:
     dalle.load_state_dict(weights)
 
 # optimizer
+# add additional discriminator optimizer
 
-opt = Adam(get_trainable_params(dalle), lr=LEARNING_RATE)
-if RESUME and opt_state:
-    opt.load_state_dict(opt_state)
+opt_gen = Adam(get_trainable_params(dalle), lr=LEARNING_RATE)
+if RESUME and opt_gen_state:
+    opt_gen.load_state_dict(opt_gen_state)
 
 if LR_DECAY:
     scheduler = ReduceLROnPlateau(
-        opt,
+        opt_gen,
         mode="min",
         factor=0.5,
         patience=10,
@@ -541,7 +543,7 @@ if deepspeed_config.get('zero_optimization', {}).get('stage', 0) >= 2:
 (distr_dalle, distr_opt, distr_dl, distr_scheduler) = distr_backend.distribute(
     args=args,
     model=dalle,
-    optimizer=opt,
+    optimizer=opt_gen,
     model_parameters=get_trainable_params(dalle),
     training_data=ds if using_deepspeed else dl,
     # Do not pass the LR scheduler to DeepSpeed so we can manually
@@ -600,7 +602,7 @@ def save_model(path, epoch=0):
     save_obj = {
         **save_obj,
         'weights': dalle.state_dict(),
-        'opt_state': opt.state_dict(),
+        'opt_gen_state': opt_gen.state_dict(),
     }
     save_obj['scheduler_state'] = (
         scheduler.state_dict() if scheduler else None)

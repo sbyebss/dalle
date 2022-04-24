@@ -385,6 +385,7 @@ class DALLE(nn.Module):
         self.total_seq_len = seq_len
 
         self.vae = vae
+        # TODO: make discriminator trainable
         set_requires_grad(self.vae, False)  # freeze VAE from being trained
 
         self.transformer = Transformer(
