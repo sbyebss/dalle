@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 from tqdm import tqdm
-
+from collections import OrderedDict
 # torch
 
 import torch
@@ -10,8 +10,7 @@ from einops import repeat
 
 # vision imports
 
-from PIL import Image
-from torchvision.utils import make_grid, save_image
+from torchvision.utils import save_image
 
 # dalle related classes and utils
 
@@ -22,19 +21,25 @@ from dalle_pytorch.tokenizer import tokenizer, HugTokenizer, YttmTokenizer, Chin
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--dalle_path', type=str, required=True,
+parser.add_argument('--dalle_path', type=str,
+                    # required=True,
+                    default='/home/jfan97/dpmodel/dalle/16L_64HD_8H_512I_128T_cc12m_cc3m_3E.pth',
                     help='path to your trained DALL-E')
 
-parser.add_argument('--vqgan_model_path', type=str, default=None,
+parser.add_argument('--vqgan_model_path', type=str,
+                    default="/home/jfan97/dpmodel/dalle/vqgan_imagenet_f16_1024.ckpt",
                     help='path to your trained VQGAN weights. This should be a .ckpt file. (only valid when taming option is enabled)')
 
-parser.add_argument('--vqgan_config_path', type=str, default=None,
+parser.add_argument('--vqgan_config_path', type=str,
+                    default="/home/jfan97/dpmodel/dalle/vqgan_imagenet_f16_1024_config.yml",
                     help='path to your trained VQGAN config. This should be a .yaml file.  (only valid when taming option is enabled)')
 
-parser.add_argument('--text', type=str, required=True,
+parser.add_argument('--text', type=str,
+                    # required=True,
+                    default='fireflies in a field under a full moon',
                     help='your text prompt')
 
-parser.add_argument('--num_images', type=int, default=128, required=False,
+parser.add_argument('--num_images', type=int, default=10, required=False,
                     help='number of images')
 
 parser.add_argument('--batch_size', type=int, default=4, required=False,
@@ -53,7 +58,7 @@ parser.add_argument('--hug', dest='hug', action='store_true')
 
 parser.add_argument('--chinese', dest='chinese', action='store_true')
 
-parser.add_argument('--taming', dest='taming', action='store_true')
+parser.add_argument('--taming', dest='taming', action='store_false')
 
 parser.add_argument('--gentxt', dest='gentxt', action='store_true')
 
@@ -105,8 +110,12 @@ assert not (exists(vae_class_name) and vae.__class__.__name__ !=
 
 # reconstitute DALL-E
 
-dalle = DALLE(vae=vae, **dalle_params).cuda()
-
+dalle = DALLE(vae=vae, **dalle_params,
+              #  optimize_for_inference=True
+              ).cuda()
+weights = OrderedDict([(
+    key.replace('to_qkv', 'fn.to_qkv').replace('to_out', 'fn.to_out').replace('attn_fn', 'fn.attn_fn'), value)
+    for key, value in weights.items()])
 dalle.load_state_dict(weights)
 
 # generate images
@@ -128,7 +137,10 @@ for j, text in tqdm(enumerate(texts)):
     outputs = []
 
     for text_chunk in tqdm(text_tokens.split(args.batch_size), desc=f'generating images for - {text}'):
-        output = dalle.generate_images(text_chunk, filter_thres=args.top_k)
+        output = dalle.generate_images(
+            text_chunk, filter_thres=args.top_k
+            # , use_cache=True
+        )
         outputs.append(output)
 
     outputs = torch.cat(outputs)
